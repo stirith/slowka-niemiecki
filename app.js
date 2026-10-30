@@ -1,0 +1,717 @@
+'use strict';
+
+const STORE_KEY = 'slowka-de-v2';
+
+// Listy startowe: Wörterliste str. 23 (78 słówek), podział na dni wg planu nauki.
+// Format "niemiecki = polski", kilka znaczeń po ukośniku lub przecinku.
+const START_DECKS = [
+  ['dzien1', 'Dzień 1', '1️⃣', `der Papagei = papuga
+Alles Gute! = Wszystkiego dobrego!
+die Schwester = siostra
+das Jahr = rok
+die Deutsche = Niemka
+tschüss = pa, pa
+wie = jak
+genial = genialny
+die Mutter = mama
+toll = świetnie`],
+  ['dzien2', 'Dzień 2', '2️⃣', `beantworten = odpowiadać
+heißen = nazywać się
+der Geburtstag = urodziny
+aber = ale
+der Lehrer = nauczyciel
+acht = 8
+auch = też
+drei = 3
+hallo = cześć
+der Computer = komputer`],
+  ['dzien3', 'Dzień 3', '3️⃣', `zwölf = 12
+das Geschenk = prezent
+Ich weiß! = Ja wiem!
+schön = ładny
+(das) Deutschland = Niemcy
+fünf = 5
+vier = 4
+alt = stary
+die Familie = rodzina
+(das) Spanien = Hiszpania`],
+  ['dzien4', 'Dzień 4', '4️⃣', `sieben = 7
+sein = być
+die Polin = Polka
+kommen = pochodzić
+der Vater = tata
+was = co
+der Deutsche = Niemiec
+der Opa = dziadek
+das Haus = dom
+danke = dziękuję`],
+  ['dzien5', 'Dzień 5', '5️⃣', `die Großmutter = babcia
+der Großvater = dziadek
+die Katze = kot
+der Hund = pies
+sechs = 6
+sehr = bardzo
+und = i
+zwei = 2
+mein = mój
+eins = 1`],
+  ['dzien6', 'Dzień 6', '6️⃣', `die Geschwister = rodzeństwo
+sein = jego
+neun = 9
+der Pole = Polak
+die Sonne = słońce
+die Frage = pytanie
+ich = ja
+du = ty
+zehn = 10
+(das) Polen = Polska`],
+  ['dzien7', 'Dzień 7', '7️⃣', `wunderbar = wspaniale
+woher = skąd
+ihr = jej
+haben = mieć
+jetzt = teraz
+dein = twój
+und du? = a ty?
+(das) England = Anglia
+die Oma = babcia`],
+  ['dzien8', 'Dzień 8', '8️⃣', `buchstabieren = przeliterować
+auf Wiedersehen = do widzenia
+elf = 11
+aus = z (Ich komme aus Polen. – Pochodzę z Polski.)
+sie = ona
+sagen = mówić, powiedzieć
+(das) Italien = Włochy
+er = on
+es = ono`],
+];
+
+const DEFAULT_SETTINGS = {
+  direction: 'pl-de',   // pl-de | de-pl | mix
+  testType: 'choice',   // choice | type | mix
+  count: 10,            // 0 = wszystkie
+  requireArticle: false,
+  speak: true,
+};
+
+const LABELS = {
+  direction: { 'pl-de': 'PL → DE', 'de-pl': 'DE → PL', mix: 'Mieszany' },
+  testType: { choice: 'Wybór z 3', type: 'Wpisywanie', mix: 'Wybór + wpisywanie' },
+};
+
+const PRAISE = ['Brawo! 🎉', 'Super! ⭐', 'Świetnie! 🙌', 'Tak jest! 💪', 'Ekstra! 🌟'];
+
+// ---------- czyste funkcje (testowalne bez przeglądarki) ----------
+
+function parseWords(text) {
+  const words = [];
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^(.+?)\s*(?:=|\t|\s[-–—]\s)\s*(.+)$/);
+    if (m) words.push({ de: m[1].trim(), pl: m[2].trim() });
+  }
+  return words;
+}
+
+function wordsToText(words) {
+  return words.map(w => `${w.de} = ${w.pl}`).join('\n');
+}
+
+function startDecks() {
+  return START_DECKS.map(([id, name, emoji, text]) => ({ id, name, emoji, words: parseWords(text) }));
+}
+
+const FOLD = { ą: 'a', ć: 'c', ę: 'e', ł: 'l', ń: 'n', ó: 'o', ś: 's', ź: 'z', ż: 'z', ä: 'a', ö: 'o', ü: 'u', ß: 'ss' };
+const ARTICLE = /^(der|die|das|ein|eine|einen) /;
+
+function basic(s) {
+  return String(s).toLowerCase().replace(/[’`´]/g, "'").replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '').trim();
+}
+
+// Wersja „wyrozumiała”: bez umlautów (ä = a = ae), bez polskich znaków, bez interpunkcji.
+function loose(s, stripArticle) {
+  let t = basic(s).replace(/\(.*?\)/g, ' ');
+  t = t.replace(/[ąćęłńóśźżäöüß]/g, c => FOLD[c]);
+  t = t.replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u');
+  t = t.replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  if (stripArticle) t = t.replace(ARTICLE, '');
+  return t;
+}
+
+// "(das) Deutschland" przyjmuje odpowiedź z rodzajnikiem i bez; inne nawiasy to tylko podpowiedź.
+function alternatives(target) {
+  const s = String(target);
+  const variants = [s, s.replace(/\((der|die|das)\)/g, '$1')];
+  return [...new Set(variants.flatMap(v =>
+    v.replace(/\(.*?\)/g, ' ').split(/[/,;]/).map(x => x.trim()).filter(Boolean)))];
+}
+
+// 'exact' – idealnie, 'close' – dobrze, ale bez umlautu/rodzajnika/polskiej litery, 'wrong'.
+function checkTyped(input, target, german, requireArticle) {
+  const inp = basic(input);
+  if (!inp) return 'wrong';
+  const alts = alternatives(target);
+  if (alts.some(a => basic(a) === inp)) return 'exact';
+  const strip = german && !requireArticle;
+  const li = loose(input, strip);
+  if (li && alts.some(a => loose(a, strip) === li)) return 'close';
+  return 'wrong';
+}
+
+// Rodzajnik ma znaczenie: der Deutsche (Niemiec) i die Deutsche (Niemka) to różne słówka.
+function overlaps(a, b) {
+  const la = alternatives(a).map(x => loose(x, false));
+  return alternatives(b).some(x => la.includes(loose(x, false)));
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const keyOf = w => w.de + '|' + w.pl;
+
+function uniqueWords(words) {
+  const seen = new Set();
+  return words.filter(w => (seen.has(keyOf(w)) ? false : seen.add(keyOf(w))));
+}
+
+// ---------- stan ----------
+
+let state;
+let view = 'home';
+let session = null;
+let editingId = null;
+let advanceTimer = null;
+
+function load() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) { /* brak dostępu do pamięci */ }
+  if (!s || !Array.isArray(s.decks)) {
+    const decks = startDecks();
+    return { decks, selected: decks.map(d => d.id), settings: { ...DEFAULT_SETTINGS }, stats: {} };
+  }
+  return {
+    decks: s.decks,
+    selected: Array.isArray(s.selected) ? s.selected : [],
+    settings: { ...DEFAULT_SETTINGS, ...(s.settings || {}) },
+    stats: s.stats || {},
+  };
+}
+
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* tryb prywatny */ }
+}
+
+function selectedWords() {
+  return uniqueWords(state.decks.filter(d => state.selected.includes(d.id)).flatMap(d => d.words));
+}
+
+function allWords() {
+  return uniqueWords(state.decks.flatMap(d => d.words));
+}
+
+function hardWords() {
+  return allWords().filter(w => {
+    const st = state.stats[keyOf(w)];
+    return st && st.w > 0 && st.w >= st.r;
+  });
+}
+
+function record(w, ok) {
+  const st = state.stats[keyOf(w)] || { r: 0, w: 0 };
+  if (ok) st.r++; else st.w++;
+  state.stats[keyOf(w)] = st;
+  save();
+}
+
+function pickMode(value, a, b) {
+  return value === 'mix' ? (Math.random() < 0.5 ? a : b) : value;
+}
+
+// Inne słówka o tym samym pytaniu, np. babcia = die Oma i die Großmutter, sein = być i jego.
+function sameMeaning(w, dir) {
+  const p = dir === 'pl-de' ? 'pl' : 'de';
+  return allWords().filter(c => keyOf(c) !== keyOf(w) && overlaps(c[p], w[p]));
+}
+
+function makeOptions(w, dir) {
+  const field = dir === 'pl-de' ? 'de' : 'pl';
+  const prompt = dir === 'pl-de' ? 'pl' : 'de';
+  const correct = w[field];
+  const used = [correct];
+  const out = [];
+  for (const source of [shuffle(selectedWords()), shuffle(allWords())]) {
+    for (const c of source) {
+      if (out.length === 2) break;
+      if (overlaps(c[prompt], w[prompt]) || used.some(u => overlaps(u, c[field]))) continue;
+      used.push(c[field]);
+      out.push(c[field]);
+    }
+  }
+  return out.length < 2 ? null : shuffle([correct, ...out]);
+}
+
+function buildQuestion(w) {
+  const dir = pickMode(state.settings.direction, 'pl-de', 'de-pl');
+  let type = pickMode(state.settings.testType, 'choice', 'type');
+  let options = null;
+  if (type === 'choice') {
+    options = makeOptions(w, dir);
+    if (!options) type = 'type';
+  }
+  return { w, dir, type, options };
+}
+
+// ---------- mowa ----------
+
+let deVoice = null;
+
+function pickVoice() {
+  if (!('speechSynthesis' in window)) return;
+  const vs = speechSynthesis.getVoices();
+  deVoice = vs.find(v => v.lang === 'de-DE') || vs.find(v => v.lang && v.lang.startsWith('de')) || null;
+}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  const t = String(text).replace(/\(.*?\)/g, '').split('/')[0].trim();
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(t);
+  u.lang = 'de-DE';
+  if (deVoice) u.voice = deVoice;
+  u.rate = 0.9;
+  speechSynthesis.speak(u);
+}
+
+function autoSpeak(text) {
+  if (state.settings.speak) speak(text);
+}
+
+// ---------- widoki ----------
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function speakBtn(de, extra = '') {
+  return `<button type="button" class="speak ${extra}" data-action="speak" data-text="${esc(de)}" aria-label="Posłuchaj">🔊</button>`;
+}
+
+function topbar(idx, total) {
+  const pct = total ? Math.round((idx / total) * 100) : 0;
+  return `<div class="bar">
+    <button class="close" data-action="home" aria-label="Zakończ">✕</button>
+    <div class="progress"><span style="width:${pct}%"></span></div>
+    <span class="pos">${Math.min(idx + 1, total)}/${total}</span>
+  </div>`;
+}
+
+function viewHome() {
+  const sel = selectedWords();
+  const hard = hardWords();
+  const s = state.settings;
+  const dis = sel.length ? '' : 'disabled';
+  return `
+  <header class="top">
+    <h1>Słówka <span aria-hidden="true">🇩🇪</span></h1>
+    <p class="sub">Wybierz listy i zacznij naukę</p>
+  </header>
+  <section class="chips">
+    ${state.decks.map(d => `<button class="chip ${state.selected.includes(d.id) ? 'on' : ''}" data-action="toggleDeck" data-id="${esc(d.id)}">
+      <span>${esc(d.emoji || '📘')}</span>${esc(d.name)}<small>${d.words.length}</small></button>`).join('')}
+  </section>
+  <p class="count">${sel.length ? `Wybrane słówka: <b>${sel.length}</b>` : 'Zaznacz co najmniej jedną listę'}</p>
+  <div class="big">
+    <button class="big-btn cards" data-action="startCards" ${dis}>
+      <span class="ico">🃏</span><span><b>Fiszki</b><small>${LABELS.direction[s.direction]}</small></span>
+    </button>
+    <button class="big-btn test" data-action="startTest" ${dis}>
+      <span class="ico">✅</span><span><b>Test</b><small>${LABELS.testType[s.testType]} · ${LABELS.direction[s.direction]}</small></span>
+    </button>
+    ${hard.length ? `<button class="big-btn hard" data-action="startHard">
+      <span class="ico">🔁</span><span><b>Trudne słówka</b><small>${hard.length} do powtórki</small></span>
+    </button>` : ''}
+  </div>`;
+}
+
+function viewLists() {
+  return `
+  <header class="top"><h1>Listy słówek</h1><p class="sub">Dotknij listy, żeby ją zmienić</p></header>
+  <ul class="lists">
+    ${state.decks.map(d => `<li><button class="list-row" data-action="editDeck" data-id="${esc(d.id)}">
+      <span class="ico">${esc(d.emoji || '📘')}</span><span class="name">${esc(d.name)}</span><small>${d.words.length} słówek</small><span class="chev">›</span>
+    </button></li>`).join('')}
+  </ul>
+  <button class="primary wide" data-action="newDeck">+ Nowa lista</button>`;
+}
+
+function viewEdit() {
+  const d = state.decks.find(x => x.id === editingId) || { name: '', emoji: '📘', words: [] };
+  return `
+  <header class="top"><h1>${editingId ? 'Edytuj listę' : 'Nowa lista'}</h1></header>
+  <div class="form">
+    <div class="row2">
+      <label class="field emoji"><span>Ikona</span><input id="deck-emoji" maxlength="4" value="${esc(d.emoji || '')}"></label>
+      <label class="field"><span>Nazwa</span><input id="deck-name" value="${esc(d.name)}" placeholder="np. Lekcja 5"></label>
+    </div>
+    <label class="field"><span>Słówka</span>
+      <textarea id="deck-text" rows="14" autocapitalize="off" autocorrect="off" spellcheck="false"
+        placeholder="der Hund = pies&#10;die Katze = kot">${esc(wordsToText(d.words))}</textarea>
+    </label>
+    <p class="hint">Każde słówko w nowej linii: <b>niemiecki = polski</b>. Rzeczowniki z rodzajnikiem (der / die / das).
+      Kilka znaczeń po ukośniku: <i>die Mutter = mama / matka</i>.</p>
+    <button class="primary wide" data-action="saveDeck">Zapisz</button>
+    <button class="ghost wide" data-action="lists">Anuluj</button>
+    ${editingId ? '<button class="danger wide" data-action="deleteDeck">Usuń listę</button>' : ''}
+  </div>`;
+}
+
+function seg(key, options) {
+  const cur = state.settings[key];
+  return `<div class="seg" role="radiogroup">${options.map(([val, label]) =>
+    `<button role="radio" aria-checked="${cur === val}" class="${cur === val ? 'on' : ''}" data-action="set" data-key="${key}" data-val="${val}">${label}</button>`).join('')}</div>`;
+}
+
+function toggle(key, label, hint) {
+  return `<label class="toggle"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>
+    <input type="checkbox" data-setting="${key}" ${state.settings[key] ? 'checked' : ''}><i></i></label>`;
+}
+
+function viewSettings() {
+  return `
+  <header class="top"><h1>Ustawienia</h1></header>
+  <div class="settings">
+    <section><h2>Kierunek</h2>${seg('direction', [['pl-de', 'PL → DE'], ['de-pl', 'DE → PL'], ['mix', 'Mieszany']])}
+      <p class="hint">Dotyczy fiszek i testu. Mieszany losuje kierunek przy każdym słówku.</p></section>
+    <section><h2>Rodzaj testu</h2>${seg('testType', [['choice', 'Wybór z 3'], ['type', 'Wpisywanie'], ['mix', 'Mix']])}</section>
+    <section><h2>Liczba pytań w teście</h2>${seg('count', [[5, '5'], [10, '10'], [20, '20'], [0, 'Wszystkie']])}</section>
+    <section class="toggles">
+      ${toggle('requireArticle', 'Wymagaj rodzajnika', 'Przy wpisywaniu trzeba podać der / die / das')}
+      ${toggle('speak', 'Czytaj po niemiecku', 'Wymowa słówka po odpowiedzi')}
+    </section>
+    <p class="hint">Przy wpisywaniu brak umlautu nie jest błędem: <b>kase</b>, <b>kaese</b> i <b>Käse</b> są zaliczane,
+      a aplikacja pokazuje poprawną pisownię.</p>
+    <section><h2>Dane</h2>
+      <button class="ghost wide" data-action="resetStats">Wyzeruj postępy</button>
+      <button class="ghost wide" data-action="resetDecks">Przywróć listy startowe</button>
+    </section>
+  </div>`;
+}
+
+function viewCards() {
+  const s = session;
+  if (s.idx >= s.queue.length) return cardsSummary();
+  const it = s.queue[s.idx];
+  const frontDe = it.dir === 'de-pl';
+  const front = frontDe ? it.w.de : it.w.pl;
+  const back = frontDe ? it.w.pl : it.w.de;
+  const also = sameMeaning(it.w, it.dir).map(c => (frontDe ? c.pl : c.de));
+  return `
+  ${topbar(s.idx, s.queue.length)}
+  <div class="stage ${s.flipped ? 'flipped' : ''}" id="stage">
+    <button class="flashcard" data-action="flip" aria-label="Odwróć fiszkę">
+      <span class="inner">
+        <span class="face front"><small>${frontDe ? 'niemiecki' : 'polski'}</small><b>${esc(front)}</b><em>Dotknij, aby odwrócić</em></span>
+        <span class="face back"><small>${frontDe ? 'polski' : 'niemiecki'}</small><b>${esc(back)}</b>${also.length ? `<em>też: ${esc(also.join(', '))}</em>` : ''}</span>
+      </span>
+    </button>
+    <div class="card-tools">${speakBtn(it.w.de, frontDe ? '' : 'only-flipped')}</div>
+    <div class="rate">
+      <button class="rate-btn no" data-action="cardNo">😕 Jeszcze nie</button>
+      <button class="rate-btn yes" data-action="cardYes">😊 Umiem</button>
+    </div>
+  </div>`;
+}
+
+function cardsSummary() {
+  const s = session;
+  return `
+  <div class="summary">
+    <div class="big-emoji">${s.unknown.length ? '💪' : '🏆'}</div>
+    <h1>Umiesz ${s.known.length} z ${s.queue.length}</h1>
+    <p class="sub">${s.unknown.length ? 'Powtórz te, których jeszcze nie znasz.' : 'Wszystkie słówka opanowane!'}</p>
+    ${s.unknown.length ? `<button class="primary wide" data-action="repeatCards">Powtórz nieumiane (${s.unknown.length})</button>` : ''}
+    <button class="ghost wide" data-action="startTestFromCards">Zrób test z tych słówek</button>
+    <button class="ghost wide" data-action="home">Wróć</button>
+  </div>`;
+}
+
+function viewTest() {
+  const s = session;
+  if (s.idx >= s.items.length) return testSummary();
+  const q = s.items[s.idx];
+  const toGerman = q.dir === 'pl-de';
+  const prompt = toGerman ? q.w.pl : q.w.de;
+  const target = toGerman ? q.w.de : q.w.pl;
+  const f = s.feedback;
+  let body;
+  if (q.type === 'choice') {
+    body = `<div class="options">${q.options.map((o, i) => {
+      let cls = '';
+      if (f) cls = o === target ? 'right' : o === f.given ? 'wrong' : 'dim';
+      return `<button class="opt ${cls}" data-action="choose" data-i="${i}" ${f ? 'disabled' : ''}>${esc(o)}</button>`;
+    }).join('')}</div>`;
+  } else {
+    body = `<form id="type-form" class="type" autocomplete="off">
+      <input id="answer" type="text" lang="${toGerman ? 'de' : 'pl'}" autocapitalize="off" autocomplete="off" autocorrect="off"
+        spellcheck="false" enterkeyhint="done" placeholder="${toGerman ? 'Wpisz po niemiecku' : 'Wpisz po polsku'}"
+        value="${f ? esc(f.given) : ''}" ${f ? 'disabled' : ''} class="${f ? (f.ok ? 'ok' : 'bad') : ''}">
+      ${toGerman && !f ? `<div class="uml">${['ä', 'ö', 'ü', 'ß'].map(c =>
+        `<button type="button" class="uml-key" data-action="uml" data-c="${c}">${c}</button>`).join('')}</div>` : ''}
+      ${f ? '' : '<button class="primary wide" type="submit">Sprawdź</button>'}
+    </form>`;
+  }
+  const others = f ? [target, ...sameMeaning(q.w, q.dir).map(c => (toGerman ? c.de : c.pl))].filter(t => t !== f.matched) : [];
+  const fb = f ? `<div class="feedback ${f.ok ? 'ok' : 'bad'}">
+      <p class="fb-title">${f.title}</p>
+      ${f.result === 'close' ? `<p>Poprawna pisownia: <b>${esc(f.matched)}</b></p>` : ''}
+      ${!f.ok ? `<p>Poprawnie: <b>${esc(target)}</b></p>` : ''}
+      ${f.ok && q.type === 'type' && others.length ? `<p>Też dobrze: ${esc(others.join(', '))}</p>` : ''}
+      ${!f.ok && others.length > 1 ? `<p>albo: ${esc(others.slice(1).join(', '))}</p>` : ''}
+      <div class="fb-actions">${speakBtn(q.w.de)}<button class="primary" data-action="next">Dalej →</button></div>
+    </div>` : '';
+  return `
+  ${topbar(s.idx, s.items.length)}
+  <div class="prompt">
+    <small>${toGerman ? 'Jak to jest po niemiecku?' : 'Co to znaczy po polsku?'}</small>
+    <b>${esc(prompt)}</b>
+    ${!toGerman ? speakBtn(q.w.de) : ''}
+  </div>
+  ${body}
+  ${fb}`;
+}
+
+function testSummary() {
+  const s = session;
+  const total = s.items.length;
+  const pct = total ? Math.round((s.score / total) * 100) : 0;
+  const stars = pct >= 90 ? 3 : pct >= 70 ? 2 : pct >= 40 ? 1 : 0;
+  return `
+  <div class="summary">
+    <div class="stars">${[1, 2, 3].map(i => `<span class="${i <= stars ? 'on' : ''}">★</span>`).join('')}</div>
+    <h1>${s.score} / ${total}</h1>
+    <p class="sub">${pct >= 90 ? 'Rewelacja!' : pct >= 70 ? 'Bardzo dobrze!' : pct >= 40 ? 'Nieźle, ćwicz dalej!' : 'Spróbuj jeszcze raz, dasz radę!'}</p>
+    ${s.mistakes.length ? `<ul class="mistakes">${s.mistakes.map(m => {
+      const toGerman = m.q.dir === 'pl-de';
+      return `<li><span>${esc(toGerman ? m.q.w.pl : m.q.w.de)}</span><b>${esc(toGerman ? m.q.w.de : m.q.w.pl)}</b></li>`;
+    }).join('')}</ul>
+    <button class="primary wide" data-action="repeatMistakes">Powtórz błędy (${s.mistakes.length})</button>` : ''}
+    <button class="ghost wide" data-action="startTest">Nowy test</button>
+    <button class="ghost wide" data-action="home">Wróć</button>
+  </div>`;
+}
+
+const VIEWS = { home: viewHome, lists: viewLists, edit: viewEdit, settings: viewSettings, cards: viewCards, test: viewTest };
+const TABS = [['home', '📚', 'Nauka'], ['lists', '📝', 'Listy'], ['settings', '⚙️', 'Ustawienia']];
+
+function render() {
+  document.getElementById('app').innerHTML = VIEWS[view]();
+  const tabs = document.getElementById('tabs');
+  const tabbed = view === 'home' || view === 'lists' || view === 'settings' || view === 'edit';
+  tabs.hidden = !tabbed;
+  const active = view === 'edit' ? 'lists' : view;
+  tabs.innerHTML = tabbed ? TABS.map(([v, ico, label]) =>
+    `<button class="${active === v ? 'on' : ''}" data-action="${v}"><span>${ico}</span>${label}</button>`).join('') : '';
+  if (view === 'test' && session && !session.feedback) {
+    const input = document.getElementById('answer');
+    if (input) input.focus();
+  }
+}
+
+function go(v) {
+  clearTimeout(advanceTimer);
+  view = v;
+  render();
+  window.scrollTo(0, 0);
+}
+
+// ---------- akcje ----------
+
+function startCards(words) {
+  if (!words.length) return;
+  session = {
+    queue: shuffle(words).map(w => ({ w, dir: pickMode(state.settings.direction, 'pl-de', 'de-pl') })),
+    idx: 0, flipped: false, known: [], unknown: [],
+  };
+  go('cards');
+  speakCardFront();
+}
+
+function speakCardFront() {
+  const it = session.queue[session.idx];
+  if (it && it.dir === 'de-pl') autoSpeak(it.w.de);
+}
+
+function rateCard(knew) {
+  const it = session.queue[session.idx];
+  (knew ? session.known : session.unknown).push(it.w);
+  session.idx++;
+  session.flipped = false;
+  render();
+  speakCardFront();
+}
+
+function startTest(words) {
+  if (!words.length) return;
+  const n = state.settings.count || words.length;
+  const chosen = shuffle(words).slice(0, Math.min(n, words.length));
+  session = { items: chosen.map(buildQuestion), idx: 0, score: 0, mistakes: [], feedback: null };
+  go('test');
+}
+
+function answer(given, result, matched) {
+  const q = session.items[session.idx];
+  const ok = result !== 'wrong';
+  record(q.w, ok);
+  if (ok) session.score++;
+  else session.mistakes.push({ q, given });
+  const title = !ok ? 'Ups, nie tym razem' : result === 'close' ? 'Dobrze! 👍' : PRAISE[Math.floor(Math.random() * PRAISE.length)];
+  session.feedback = { ok, result, given, title, matched };
+  render();
+  autoSpeak(q.w.de);
+  if (result === 'exact') advanceTimer = setTimeout(nextQuestion, 1100);
+}
+
+function nextQuestion() {
+  clearTimeout(advanceTimer);
+  if (view !== 'test' || !session.feedback) return;
+  session.idx++;
+  session.feedback = null;
+  render();
+}
+
+function submitTyped() {
+  const input = document.getElementById('answer');
+  if (!input || session.feedback || !input.value.trim()) return;
+  const q = session.items[session.idx];
+  const toGerman = q.dir === 'pl-de';
+  // Zaliczamy każde słówko o tym samym pytaniu (babcia: die Oma albo die Großmutter).
+  const targets = [q.w, ...sameMeaning(q.w, q.dir)].map(w => (toGerman ? w.de : w.pl));
+  let result = 'wrong';
+  let matched = targets[0];
+  for (const t of targets) {
+    const r = checkTyped(input.value, t, toGerman, state.settings.requireArticle);
+    if (r === 'exact') { result = r; matched = t; break; }
+    if (r === 'close' && result === 'wrong') { result = r; matched = t; }
+  }
+  answer(input.value.trim(), result, matched);
+}
+
+const actions = {
+  home: () => go('home'),
+  lists: () => go('lists'),
+  settings: () => go('settings'),
+  toggleDeck(el) {
+    const id = el.dataset.id;
+    state.selected = state.selected.includes(id) ? state.selected.filter(x => x !== id) : [...state.selected, id];
+    save();
+    render();
+  },
+  startCards: () => startCards(selectedWords()),
+  startTest: () => startTest(selectedWords()),
+  startHard: () => startTest(hardWords()),
+  flip() {
+    session.flipped = !session.flipped;
+    document.getElementById('stage').classList.toggle('flipped', session.flipped);
+    const it = session.queue[session.idx];
+    if (session.flipped && it.dir === 'pl-de') autoSpeak(it.w.de);
+  },
+  cardYes: () => rateCard(true),
+  cardNo: () => rateCard(false),
+  repeatCards: () => startCards(session.unknown),
+  startTestFromCards: () => startTest(session.queue.map(it => it.w)),
+  speak: el => speak(el.dataset.text),
+  choose(el) {
+    const q = session.items[session.idx];
+    const given = q.options[Number(el.dataset.i)];
+    const target = q.dir === 'pl-de' ? q.w.de : q.w.pl;
+    answer(given, given === target ? 'exact' : 'wrong', target);
+  },
+  uml(el) {
+    const input = document.getElementById('answer');
+    if (!input) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.setRangeText(el.dataset.c, start, end, 'end');
+    input.focus();
+  },
+  next: () => nextQuestion(),
+  repeatMistakes: () => startTest(session.mistakes.map(m => m.q.w)),
+  set(el) {
+    const key = el.dataset.key;
+    state.settings[key] = key === 'count' ? Number(el.dataset.val) : el.dataset.val;
+    save();
+    render();
+  },
+  editDeck(el) { editingId = el.dataset.id; go('edit'); },
+  newDeck() { editingId = null; go('edit'); },
+  saveDeck() {
+    const name = document.getElementById('deck-name').value.trim() || 'Moja lista';
+    const emoji = document.getElementById('deck-emoji').value.trim() || '📘';
+    const words = parseWords(document.getElementById('deck-text').value);
+    if (!words.length) { alert('Dodaj co najmniej jedno słówko w formacie: niemiecki = polski'); return; }
+    const d = state.decks.find(x => x.id === editingId);
+    if (d) Object.assign(d, { name, emoji, words });
+    else {
+      const id = 'l' + Date.now().toString(36);
+      state.decks.push({ id, name, emoji, words });
+      state.selected.push(id);
+    }
+    save();
+    go('lists');
+  },
+  deleteDeck() {
+    if (!confirm('Usunąć tę listę?')) return;
+    state.decks = state.decks.filter(x => x.id !== editingId);
+    state.selected = state.selected.filter(x => x !== editingId);
+    save();
+    go('lists');
+  },
+  resetStats() {
+    if (!confirm('Wyzerować postępy (lista trudnych słówek)?')) return;
+    state.stats = {};
+    save();
+    render();
+  },
+  resetDecks() {
+    if (!confirm('Przywrócić listy startowe? Twoje własne listy zostaną.')) return;
+    const fresh = startDecks();
+    const ids = fresh.map(d => d.id);
+    state.decks = [...fresh, ...state.decks.filter(d => !ids.includes(d.id))];
+    for (const id of ids) if (!state.selected.includes(id)) state.selected.push(id);
+    save();
+    render();
+  },
+};
+
+function init() {
+  state = load();
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-action]');
+    if (!el || el.disabled) return;
+    const fn = actions[el.dataset.action];
+    if (fn) fn(el, e);
+  });
+  // Klawisze umlautów nie zabierają fokusu z pola (na iPhonie klawiatura zostaje).
+  document.addEventListener('pointerdown', e => { if (e.target.closest('.uml-key')) e.preventDefault(); });
+  document.addEventListener('submit', e => { e.preventDefault(); if (e.target.id === 'type-form') submitTyped(); });
+  document.addEventListener('change', e => {
+    const key = e.target.dataset.setting;
+    if (key) { state.settings[key] = e.target.checked; save(); }
+  });
+  if ('speechSynthesis' in window) {
+    pickVoice();
+    speechSynthesis.onvoiceschanged = pickVoice;
+  }
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  render();
+}
+
+if (typeof document !== 'undefined') init();
