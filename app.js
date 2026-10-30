@@ -192,8 +192,7 @@ function load() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) { /* brak dostępu do pamięci */ }
   if (!s || !Array.isArray(s.decks)) {
-    const decks = startDecks();
-    return { decks, selected: decks.map(d => d.id), settings: { ...DEFAULT_SETTINGS }, stats: {} };
+    return { decks: startDecks(), selected: [], settings: { ...DEFAULT_SETTINGS }, stats: {} };
   }
   return {
     decks: s.decks,
@@ -683,7 +682,6 @@ const actions = {
     const fresh = startDecks();
     const ids = fresh.map(d => d.id);
     state.decks = [...fresh, ...state.decks.filter(d => !ids.includes(d.id))];
-    for (const id of ids) if (!state.selected.includes(id)) state.selected.push(id);
     save();
     render();
   },
