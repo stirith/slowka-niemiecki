@@ -8,7 +8,11 @@ kierunek PL→DE, DE→PL lub mieszany. Bez serwera i bez kont, wszystko w przeg
 - Rodzajnik der/die/das jest opcjonalny, chyba że w ustawieniach włączysz „Wymagaj rodzajnika”.
 - Własne listy dodajesz w zakładce **Listy** w formacie `der Hund = pies`, po jednym słówku w linii.
   Kilka znaczeń rozdzielasz ukośnikiem.
-- Słówka z błędami trafiają do „Trudne słówka” na ekranie głównym.
+- Słówka z błędami trafiają do „Trudne słówka” na ekranie głównym, a w sesji błędne słówko wraca 3 pytania później.
+- **Plan „Dzisiaj”**: słówka dzielone na dni od daty startu do dnia przed testem (Ustawienia), ostatnie 2 dni to powtórka
+  i próbny test. Codziennie: powtórka z poprzednich dni → fiszki z nowymi → test z nowymi. Seria dni 🔥, gwiazdka za dzień,
+  licznik „umiesz X/78” (słówko umiesz po 2 dobrych odpowiedziach z rzędu). Datę do testów podmienisz przez `?dzis=2026-11-05`.
+- Tryby dodatkowe: „Posłuchaj i wybierz” oraz „Rodzajniki” (der niebieski, die czerwony, das zielony).
 
 ## Uruchomienie lokalne
 
