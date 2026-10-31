@@ -366,12 +366,20 @@ function planInfo() {
   return { ...splitPlan(words, start, test), start, test, words, idx: today - start, daysToTest: test - today };
 }
 
-function todayEntry(info) {
-  const date = todayIso();
+// Oglądany dzień planu (indeks od 0); null = dzisiaj.
+let planDay = null;
+
+function viewedDay(info) {
+  const today = Math.min(Math.max(info.idx, 0), info.totalDays);
+  return planDay === null ? today : Math.min(Math.max(planDay, 0), info.totalDays);
+}
+
+// Wpis dnia planu. Dni bez zaliczonego kroku liczy od nowa, gdy zmienią się ustawienia albo dzień jest jeszcze przed nami.
+function dayEntry(info, i) {
+  const date = isoFromNum(info.start + i);
   const cfg = [state.settings.planStart, state.settings.testDate, WORDS_PER_DAY].join('|');
   const old = state.plan.days[date];
-  if (old && (old.cfg === cfg || Object.keys(old.done).length)) return old;
-  const i = Math.max(0, info.idx);
+  if (old && (Object.keys(old.done).length || (old.cfg === cfg && i <= info.idx))) return old;
   let e;
   if (i >= info.totalDays) {
     e = { steps: ['mock'], newKeys: [], reviewKeys: [] };
@@ -384,8 +392,8 @@ function todayEntry(info) {
     const nouns = shuffle(info.words.filter(w => splitArticle(w.de))).sort(weakFirst).slice(0, 10);
     e = { steps: ['mix', 'articles'], newKeys: [], reviewKeys: shuffle(mix).map(keyOf), artKeys: nouns.map(keyOf) };
   } else {
-    // Nowe: słówka z dni do dziś, których jeszcze nie było (nadrabia opuszczone dni, maks. perDay + 5 naraz).
-    const fresh = info.chunks.slice(0, i + 1).flat().filter(w => !state.stats[keyOf(w)]).slice(0, WORDS_PER_DAY + 5);
+    // Nowe: słówka przypisane do tego dnia; powtórka z tych, które już były.
+    const fresh = info.chunks[i];
     const freshKeys = new Set(fresh.map(keyOf));
     const review = info.words.filter(w => state.stats[keyOf(w)] && !freshKeys.has(keyOf(w))).sort(weakFirst).slice(0, 8);
     const steps = [];
@@ -412,8 +420,8 @@ const STEP_INFO = {
   mock: ['📝', 'Próbny test (z rodzajnikiem)', null],
 };
 
-function runStep(step) {
-  const e = state.plan.days[todayIso()];
+function runStep(step, date) {
+  const e = state.plan.days[date];
   if (!e) return;
   const words = keys => keys.map(wordByKey).filter(Boolean);
   const onDone = () => { e.done[step] = true; save(); };
@@ -482,42 +490,55 @@ function topbar(idx, total) {
 
 function viewToday() {
   const info = planInfo();
-  const e = todayEntry(info);
+  const v = viewedDay(info);
+  const e = dayEntry(info, v);
+  const date = isoFromNum(info.start + v);
   const mastered = info.words.filter(isMastered).length;
   const fire = streak();
   let title;
-  if (info.idx >= info.totalDays) title = info.daysToTest === 0 ? 'Dziś test! Powodzenia 🍀' : 'Plan zakończony 🎉';
-  else if (e.day >= info.learnDays + info.mixDays) title = `Ostatnia prosta · dzień ${e.day + 1} z ${info.totalDays}`;
-  else if (e.day >= info.learnDays) title = `Powtórka · dzień ${e.day + 1} z ${info.totalDays}`;
-  else title = `Dzień ${e.day + 1} z ${info.totalDays}`;
+  if (v >= info.totalDays) title = info.daysToTest === 0 ? 'Dziś test! Powodzenia 🍀' : info.daysToTest < 0 ? 'Plan zakończony 🎉' : 'Dzień testu 🍀';
+  else if (v >= info.learnDays + info.mixDays) title = `Ostatnia prosta · dzień ${v + 1} z ${info.totalDays}`;
+  else if (v >= info.learnDays) title = `Powtórka · dzień ${v + 1} z ${info.totalDays}`;
+  else title = `Dzień ${v + 1} z ${info.totalDays}`;
+  const rel = info.start + v - dayNum(todayIso());
+  const label = rel === 0 ? 'Dzisiaj' : rel === -1 ? 'Wczoraj' : rel === 1 ? 'Jutro' : plDate(date);
   const meta = [
     info.daysToTest > 0 ? `do testu <b>${info.daysToTest} ${dni(info.daysToTest)}</b>` : '',
     `umiesz <b>${mastered}/${info.words.length}</b>`,
   ].filter(Boolean).join(' · ');
-  const next = e.steps.find(s => !e.done[s]);
   const steps = e.steps.map((s, i) => {
     const [ico, label, keys] = STEP_INFO[s];
     const n = keys ? e[keys].length : info.words.length;
     const done = e.done[s];
-    return `<button class="step ${done ? 'done' : ''} ${s === next ? 'next' : ''}" data-action="planStep" data-step="${s}">
+    return `<button class="step ${done ? 'done' : ''}" data-action="planStep" data-step="${s}" data-date="${date}">
       <span class="num">${done ? '✓' : i + 1}</span><span class="lbl">${ico} ${label}</span><small>${n}</small></button>`;
   }).join('');
   const strip = Array.from({ length: info.totalDays }, (_, i) => {
     const d = state.plan.days[isoFromNum(info.start + i)];
-    const cls = dayDone(d) ? 'done' : i === info.idx ? 'now' : i < info.idx ? 'missed' : '';
-    return `<span class="${cls}" title="${isoFromNum(info.start + i)}">${dayDone(d) ? '★' : '☆'}</span>`;
+    const cls = [dayDone(d) ? 'done' : i === info.idx ? 'now' : i < info.idx ? 'missed' : '', i === v ? 'sel' : ''].join(' ');
+    return `<button class="${cls}" data-action="planGo" data-day="${i}" aria-label="Dzień ${i + 1}, ${plDate(isoFromNum(info.start + i))}">${dayDone(d) ? '★' : '☆'}</button>`;
   }).join('');
+  const done = dayDone(e)
+    ? `<p class="today-done">Dzień zaliczony! ⭐${rel === 0 ? ' Do jutra!' : ''}</p>`
+    : '';
   return `
   <section class="today">
+    <div class="daynav">
+      <button data-action="planGo" data-day="${v - 1}" ${v > 0 ? '' : 'disabled'} aria-label="Poprzedni dzień">‹</button>
+      <small>${esc(label)}</small>
+      <button data-action="planGo" data-day="${v + 1}" ${v < info.totalDays ? '' : 'disabled'} aria-label="Następny dzień">›</button>
+      ${rel !== 0 && info.idx >= 0 && info.idx <= info.totalDays ? '<button class="daynav-today" data-action="planToday">wróć do dziś</button>' : ''}
+    </div>
     <div class="today-head">
-      <div><small>Dzisiaj${info.idx < 0 ? ' · plan startuje ' + esc(plDate(state.settings.planStart)) : ''}</small><h2>${title}</h2></div>
+      <div><h2>${title}</h2>${info.idx < 0 && v === 0 ? `<small>plan startuje ${esc(plDate(state.settings.planStart))}</small>` : ''}</div>
       ${fire ? `<div class="streak" title="Dni nauki z rzędu">🔥 ${fire}</div>` : ''}
     </div>
     <p class="today-meta">${meta}</p>
     <div class="meter"><span style="width:${Math.round((mastered / Math.max(1, info.words.length)) * 100)}%"></span></div>
     <div class="steps">${steps}</div>
-    ${dayDone(e) ? '<p class="today-done">Dzień zaliczony! ⭐ Do jutra!</p>' : ''}
-    <div class="strip" aria-label="Dni planu">${strip}<span class="flag" title="Test">🏁</span></div>
+    ${done}
+    ${dayDone(e) && v < info.totalDays ? `<button class="next-day" data-action="planGo" data-day="${v + 1}">Następny dzień →</button>` : ''}
+    <div class="strip" aria-label="Dni planu">${strip}<button class="flag ${v === info.totalDays ? 'sel' : ''}" data-action="planGo" data-day="${info.totalDays}" aria-label="Dzień testu">🏁</button></div>
   </section>`;
 }
 
@@ -899,7 +920,9 @@ const actions = {
     save();
     render();
   },
-  planStep: el => runStep(el.dataset.step),
+  planStep: el => runStep(el.dataset.step, el.dataset.date),
+  planGo(el) { planDay = Number(el.dataset.day); render(); },
+  planToday() { planDay = null; render(); },
   startCards: () => startCards(selectedWords()),
   startTest: () => startTest(selectedWords()),
   startHard: () => startTest(hardWords()),

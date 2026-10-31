@@ -11,7 +11,8 @@ kierunek PL→DE, DE→PL lub mieszany. Bez serwera i bez kont, wszystko w przeg
 - Słówka z błędami trafiają do „Trudne słówka” na ekranie głównym, a w sesji błędne słówko wraca 3 pytania później.
 - **Plan „Dzisiaj”**: po 10 nowych słówek dziennie od daty startu (Ustawienia), potem powtórki mieszane i rodzajniki, ostatnie 2 dni przed testem to powtórka
   i próbny test. Codziennie: powtórka z poprzednich dni → fiszki z nowymi → test z nowymi. Seria dni 🔥, gwiazdka za dzień,
-  licznik „umiesz X/78” (słówko umiesz po 2 dobrych odpowiedziach z rzędu). Datę do testów podmienisz przez `?dzis=2026-11-05`.
+  licznik „umiesz X/78” (słówko umiesz po 2 dobrych odpowiedziach z rzędu). Strzałkami ‹ › albo klikiem w gwiazdkę
+  przechodzisz do innego dnia planu (do przodu i wstecz); każdy krok da się kliknąć w dowolnej kolejności. Datę do testów podmienisz przez `?dzis=2026-11-05`.
 - Tryby dodatkowe: „Posłuchaj i wybierz” oraz „Rodzajniki” (der niebieski, die czerwony, das zielony).
 
 ## Uruchomienie lokalne
