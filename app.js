@@ -105,6 +105,9 @@ const PRAISE = ['Brawo! 🎉', 'Super! ⭐', 'Świetnie! 🙌', 'Tak jest! 💪'
 // Ile kolejnych dobrych odpowiedzi, żeby słówko liczyło się jako „umiem”.
 const MASTERED_AFTER = 2;
 
+// Nowe słówka dziennie w planie „Dzisiaj”.
+const WORDS_PER_DAY = 10;
+
 // ---------- czyste funkcje (testowalne bez przeglądarki) ----------
 
 function parseWords(text) {
@@ -205,14 +208,18 @@ function isoFromNum(n) {
   return new Date(n * 86400000).toISOString().slice(0, 10);
 }
 
-// Podział słówek na dni nauki; ostatnie 2 dni przed testem to powtórka całości (jak w planie z PDF).
-function splitPlan(words, start, test) {
+// Podział planu: najpierw dni z nowymi słówkami (ok. perDay dziennie), potem dni powtórek mieszanych,
+// a ostatnie 2 dni przed testem to powtórka całości i próbny test (jak w planie z PDF).
+// Gdy dni jest za mało, nowych słówek dziennie jest więcej.
+function splitPlan(words, start, test, perDay = WORDS_PER_DAY) {
   const totalDays = Math.max(1, test - start);
   const reviewDays = totalDays >= 8 ? 2 : totalDays >= 4 ? 1 : 0;
-  const learnDays = totalDays - reviewDays;
+  const slots = totalDays - reviewDays;
+  const learnDays = Math.max(1, Math.min(slots, Math.ceil(words.length / perDay)));
+  const mixDays = slots - learnDays;
   const chunks = Array.from({ length: learnDays }, (_, i) =>
     words.slice(Math.round((i * words.length) / learnDays), Math.round(((i + 1) * words.length) / learnDays)));
-  return { totalDays, reviewDays, learnDays, chunks };
+  return { totalDays, reviewDays, learnDays, mixDays, chunks };
 }
 
 function dni(n) {
@@ -361,19 +368,24 @@ function planInfo() {
 
 function todayEntry(info) {
   const date = todayIso();
-  const cfg = state.settings.planStart + '|' + state.settings.testDate;
+  const cfg = [state.settings.planStart, state.settings.testDate, WORDS_PER_DAY].join('|');
   const old = state.plan.days[date];
   if (old && (old.cfg === cfg || Object.keys(old.done).length)) return old;
   const i = Math.max(0, info.idx);
   let e;
   if (i >= info.totalDays) {
     e = { steps: ['mock'], newKeys: [], reviewKeys: [] };
-  } else if (i >= info.learnDays) {
+  } else if (i >= info.learnDays + info.mixDays) {
     const weak = info.words.filter(w => !isMastered(w)).sort(weakFirst).slice(0, 20);
     e = { steps: weak.length ? ['weak', 'mock'] : ['mock'], newKeys: [], reviewKeys: weak.map(keyOf) };
+  } else if (i >= info.learnDays) {
+    // Powtórka mieszana: najpierw nieopanowane, resztę dobiera losowo; do tego rodzajniki.
+    const mix = shuffle(info.words).sort(weakFirst).slice(0, 15);
+    const nouns = shuffle(info.words.filter(w => splitArticle(w.de))).sort(weakFirst).slice(0, 10);
+    e = { steps: ['mix', 'articles'], newKeys: [], reviewKeys: shuffle(mix).map(keyOf), artKeys: nouns.map(keyOf) };
   } else {
-    // Nowe: słówka z dni do dziś, których jeszcze nie było (nadrabia opuszczone dni, maks. 15 naraz).
-    const fresh = info.chunks.slice(0, i + 1).flat().filter(w => !state.stats[keyOf(w)]).slice(0, 15);
+    // Nowe: słówka z dni do dziś, których jeszcze nie było (nadrabia opuszczone dni, maks. perDay + 5 naraz).
+    const fresh = info.chunks.slice(0, i + 1).flat().filter(w => !state.stats[keyOf(w)]).slice(0, WORDS_PER_DAY + 5);
     const freshKeys = new Set(fresh.map(keyOf));
     const review = info.words.filter(w => state.stats[keyOf(w)] && !freshKeys.has(keyOf(w))).sort(weakFirst).slice(0, 8);
     const steps = [];
@@ -395,6 +407,8 @@ const STEP_INFO = {
   cards: ['🃏', 'Nowe słówka: fiszki', 'newKeys'],
   newtest: ['✅', 'Nowe słówka: test', 'newKeys'],
   weak: ['🔁', 'Powtórka nieopanowanych', 'reviewKeys'],
+  mix: ['🔀', 'Powtórka mieszana', 'reviewKeys'],
+  articles: ['🎨', 'Rodzajniki: der, die, das', 'artKeys'],
   mock: ['📝', 'Próbny test (z rodzajnikiem)', null],
 };
 
@@ -403,7 +417,8 @@ function runStep(step) {
   if (!e) return;
   const words = keys => keys.map(wordByKey).filter(Boolean);
   const onDone = () => { e.done[step] = true; save(); };
-  if (step === 'review' || step === 'weak') startTest(words(e.reviewKeys), { type: 'auto', all: true, plan: true, onDone });
+  if (step === 'articles') startTest(words(e.artKeys || []), { type: 'article', all: true, plan: true, onDone });
+  if (step === 'review' || step === 'weak' || step === 'mix') startTest(words(e.reviewKeys), { type: 'auto', all: true, plan: true, onDone });
   if (step === 'cards') startCards(words(e.newKeys), { plan: true, onDone });
   if (step === 'newtest') startTest(words(e.newKeys), { type: 'choice', all: true, plan: true, onDone });
   if (step === 'mock') {
@@ -472,6 +487,7 @@ function viewToday() {
   const fire = streak();
   let title;
   if (info.idx >= info.totalDays) title = info.daysToTest === 0 ? 'Dziś test! Powodzenia 🍀' : 'Plan zakończony 🎉';
+  else if (e.day >= info.learnDays + info.mixDays) title = `Ostatnia prosta · dzień ${e.day + 1} z ${info.totalDays}`;
   else if (e.day >= info.learnDays) title = `Powtórka · dzień ${e.day + 1} z ${info.totalDays}`;
   else title = `Dzień ${e.day + 1} z ${info.totalDays}`;
   const meta = [
@@ -500,7 +516,7 @@ function viewToday() {
     <p class="today-meta">${meta}</p>
     <div class="meter"><span style="width:${Math.round((mastered / Math.max(1, info.words.length)) * 100)}%"></span></div>
     <div class="steps">${steps}</div>
-    ${dayDone(e) ? '<p class="today-done">Dzień zaliczony! ⭐ Jutro kolejne słówka.</p>' : ''}
+    ${dayDone(e) ? '<p class="today-done">Dzień zaliczony! ⭐ Do jutra!</p>' : ''}
     <div class="strip" aria-label="Dni planu">${strip}<span class="flag" title="Test">🏁</span></div>
   </section>`;
 }
@@ -598,7 +614,8 @@ function viewSettings() {
         <label class="field"><span>Początek nauki</span><input type="date" data-date="planStart" value="${esc(s.planStart)}"></label>
         <label class="field"><span>Data testu</span><input type="date" data-date="testDate" value="${esc(s.testDate)}"></label>
       </div>
-      <p class="hint">Słówka dzielą się na dni do dnia przed testem. Ostatnie 2 dni to powtórka całości i próbny test.</p></section>
+      <p class="hint">Codziennie ok. ${WORDS_PER_DAY} nowych słówek. Gdy się skończą, są powtórki mieszane.
+        Ostatnie 2 dni przed testem to powtórka całości i próbny test.</p></section>
     <section><h2>Kierunek</h2>${seg('direction', [['pl-de', 'PL → DE'], ['de-pl', 'DE → PL'], ['mix', 'Mieszany']])}
       <p class="hint">Dotyczy fiszek i testu. Mieszany losuje kierunek przy każdym słówku.</p></section>
     <section><h2>Rodzaj testu</h2>${seg('testType', [['choice', 'Wybór z 3'], ['type', 'Wpisywanie'], ['mix', 'Mix']])}</section>

@@ -1,6 +1,6 @@
 // Offline: odpowiedź z pamięci podręcznej, w tle pobranie świeżej wersji.
 // Po zmianie plików podbij wersję, żeby stara pamięć się wyczyściła.
-const CACHE = 'slowka-v4';
+const CACHE = 'slowka-v5';
 const ASSETS = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest',
   './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];
 
