@@ -88,7 +88,6 @@ es = ono`],
 const DEFAULT_SETTINGS = {
   direction: 'pl-de',   // pl-de | de-pl | mix
   testType: 'choice',   // choice | type | mix
-  count: 10,            // 0 = wszystkie
   requireArticle: false,
   speak: true,
   planStart: '2026-10-31',
@@ -640,7 +639,6 @@ function viewSettings() {
     <section><h2>Kierunek</h2>${seg('direction', [['pl-de', 'PL → DE'], ['de-pl', 'DE → PL'], ['mix', 'Mieszany']])}
       <p class="hint">Dotyczy fiszek i testu. Mieszany losuje kierunek przy każdym słówku.</p></section>
     <section><h2>Rodzaj testu</h2>${seg('testType', [['choice', 'Wybór z 3'], ['type', 'Wpisywanie'], ['mix', 'Mix']])}</section>
-    <section><h2>Liczba pytań w teście</h2>${seg('count', [[5, '5'], [10, '10'], [20, '20'], [0, 'Wszystkie']])}</section>
     <section class="toggles">
       ${toggle('requireArticle', 'Wymagaj rodzajnika', 'Przy wpisywaniu trzeba podać der / die / das')}
       ${toggle('speak', 'Czytaj po niemiecku', 'Wymowa słówka po odpowiedzi')}
@@ -843,8 +841,8 @@ function rateCard(knew) {
 
 function startTest(words, opts = {}) {
   if (!words.length) return;
-  const n = opts.all ? words.length : state.settings.count || words.length;
-  const chosen = shuffle(words).slice(0, Math.min(n, words.length));
+  // Test zawsze ze wszystkich podanych słówek, np. ze wszystkich zaznaczonych dni.
+  const chosen = shuffle(words);
   session = {
     items: chosen.map(w => buildQuestion(w, opts)), base: chosen.length, idx: 0, score: 0, mistakes: [],
     feedback: null, words, opts, onDone: opts.onDone,
@@ -961,7 +959,7 @@ const actions = {
   },
   set(el) {
     const key = el.dataset.key;
-    state.settings[key] = key === 'count' ? Number(el.dataset.val) : el.dataset.val;
+    state.settings[key] = el.dataset.val;
     save();
     render();
   },
