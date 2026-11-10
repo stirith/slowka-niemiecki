@@ -13,6 +13,8 @@ kierunek PL→DE, DE→PL lub mieszany. Bez serwera i bez kont, wszystko w przeg
   i próbny test. Codziennie: powtórka z poprzednich dni → fiszki z nowymi → test z nowymi. Seria dni 🔥, gwiazdka za dzień,
   licznik „umiesz X/78” (słówko umiesz po 2 dobrych odpowiedziach z rzędu). Strzałkami ‹ › albo klikiem w gwiazdkę
   przechodzisz do innego dnia planu (do przodu i wstecz); każdy krok da się kliknąć w dowolnej kolejności. Datę do testów podmienisz przez `?dzis=2026-11-05`.
+- **Fiszki wg poziomu** (pod przyciskiem „Fiszki”, z zaznaczonych dni): łatwe – opanowane (2 dobre odpowiedzi z rzędu),
+  trudne – błędów co najmniej tyle co dobrych odpowiedzi, średnie – reszta, także słówka jeszcze nieprzećwiczone.
 - Tryby dodatkowe: „Posłuchaj i wybierz” oraz „Rodzajniki” (der niebieski, die czerwony, das zielony).
 
 ## Uruchomienie lokalne

@@ -332,3 +332,12 @@ h2.section { margin-bottom: 10px; }
 .row2.dates { grid-template-columns: 1fr 1fr; }
 .dates .field { min-width: 0; }
 .dates input { font-size: 16px; min-height: 46px; min-width: 0; -webkit-appearance: none; appearance: none; }
+.levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.level-btn { display: grid; justify-items: center; gap: 2px; padding: 12px 6px; border-radius: 18px; background: var(--card); box-shadow: var(--shadow); }
+.level-btn span { font-size: 22px; line-height: 1.2; }
+.level-btn b { font-size: 15px; }
+.level-btn small { color: var(--muted); font-size: 12px; }
+.level-btn:disabled { opacity: .45; }
+.level-easy { border-bottom: 3px solid #4caf50; }
+.level-medium { border-bottom: 3px solid #f0b429; }
+.level-hard { border-bottom: 3px solid #e5533d; }

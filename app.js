@@ -281,6 +281,16 @@ function hardWords() {
   });
 }
 
+// Poziom słówka wg wyników: trudne – błędów co najmniej tyle co dobrych odpowiedzi,
+// łatwe – opanowane (2 dobre z rzędu), średnie – cała reszta (także jeszcze nieprzećwiczone).
+function levelOf(w) {
+  const st = state.stats[keyOf(w)];
+  if (st && st.w > 0 && st.w >= st.r) return 'hard';
+  return isMastered(w) ? 'easy' : 'medium';
+}
+
+const LEVELS = [['easy', '😊', 'Łatwe'], ['medium', '🙂', 'Średnie'], ['hard', '😕', 'Trudne']];
+
 // Najpierw nieopanowane, potem te z największą liczbą błędów.
 function weakFirst(a, b) {
   const sa = statOf(a), sb = statOf(b);
@@ -570,6 +580,13 @@ function viewHome() {
     <button class="big-btn test" data-action="startTest" ${dis}>
       <span class="ico">✅</span><span><b>Test</b><small>${LABELS.testType[s.testType]} · ${LABELS.direction[s.direction]}</small></span>
     </button>
+    <div class="levels" aria-label="Fiszki według poziomu">
+      ${LEVELS.map(([lvl, ico, label]) => {
+        const n = sel.filter(w => levelOf(w) === lvl).length;
+        return `<button class="level-btn level-${lvl}" data-action="startCardsLevel" data-level="${lvl}" ${n ? '' : 'disabled'}>
+          <span>${ico}</span><b>${label}</b><small>${n} ${n === 1 ? 'fiszka' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'fiszki' : 'fiszek'}</small></button>`;
+      }).join('')}
+    </div>
     <div class="extra">
       <button class="mini-btn" data-action="startListen" ${dis}><span>🎧</span><b>Posłuchaj i wybierz</b></button>
       <button class="mini-btn" data-action="startArticles" ${nouns.length ? '' : 'disabled'}>
@@ -922,6 +939,7 @@ const actions = {
   planGo(el) { planDay = Number(el.dataset.day); render(); },
   planToday() { planDay = null; render(); },
   startCards: () => startCards(selectedWords()),
+  startCardsLevel: el => startCards(selectedWords().filter(w => levelOf(w) === el.dataset.level)),
   startTest: () => startTest(selectedWords()),
   startHard: () => startTest(hardWords()),
   startListen: () => startTest(selectedWords(), { type: 'listen' }),
