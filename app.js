@@ -281,12 +281,42 @@ function hardWords() {
   });
 }
 
-// Poziom słówka wg wyników: trudne – błędów co najmniej tyle co dobrych odpowiedzi,
-// łatwe – opanowane (2 dobre z rzędu), średnie – cała reszta (także jeszcze nieprzećwiczone).
+// Poziom trudności słówek startowych (dla dziecka uczącego się od zera): łatwe – krótkie, podobne do polskiego
+// albo angielskiego; średnie – trudniejsza pisownia lub wymowa (ei, ch, sch, v = f, ü, ö); trudne – długie,
+// z ß, z kilku części, nieregularne albo łatwe do pomylenia (sein = jego, ihr = jej).
+const WORD_LEVELS = {
+  easy: ['das Jahr|rok', 'wie|jak', 'genial|genialny', 'die Mutter|mama', 'toll|świetnie', 'aber|ale', 'drei|3',
+    'hallo|cześć', 'der Computer|komputer', 'alt|stary', 'die Familie|rodzina', '(das) Spanien|Hiszpania',
+    'die Polin|Polka', 'kommen|pochodzić', 'was|co', 'der Opa|dziadek', 'das Haus|dom', 'danke|dziękuję',
+    'der Hund|pies', 'und|i', 'zwei|2', 'mein|mój', 'eins|1', 'der Pole|Polak', 'die Sonne|słońce', 'ich|ja',
+    'du|ty', '(das) Polen|Polska', 'haben|mieć', 'dein|twój', 'und du?|a ty?', '(das) England|Anglia',
+    'die Oma|babcia', 'elf|11', 'sagen|mówić, powiedzieć', '(das) Italien|Włochy', 'er|on', 'es|ono'],
+  medium: ['der Papagei|papuga', 'die Schwester|siostra', 'die Deutsche|Niemka', 'tschüss|pa, pa',
+    'der Lehrer|nauczyciel', 'acht|8', 'auch|też', 'schön|ładny', '(das) Deutschland|Niemcy', 'fünf|5', 'vier|4',
+    'sieben|7', 'sein|być', 'der Vater|tata', 'der Deutsche|Niemiec', 'die Katze|kot', 'sechs|6', 'sehr|bardzo',
+    'neun|9', 'die Frage|pytanie', 'zehn|10', 'wunderbar|wspaniale', 'woher|skąd',
+    'aus|z (Ich komme aus Polen. – Pochodzę z Polski.)', 'sie|ona'],
+  hard: ['beantworten|odpowiadać', 'heißen|nazywać się', 'der Geburtstag|urodziny', 'zwölf|12',
+    'das Geschenk|prezent', 'Ich weiß!|Ja wiem!', 'die Großmutter|babcia', 'der Großvater|dziadek',
+    'die Geschwister|rodzeństwo', 'sein|jego', 'ihr|jej', 'jetzt|teraz', 'buchstabieren|przeliterować',
+    'auf Wiedersehen|do widzenia', 'Alles Gute!|Wszystkiego dobrego!'],
+};
+const LEVEL_OF_KEY = Object.fromEntries(Object.entries(WORD_LEVELS).flatMap(([lvl, keys]) => keys.map(k => [k, lvl])));
+
+// Słówka z własnych list: ocena po samym słowie (długość, ß, umlauty, trudne zbitki, kilka wyrazów).
+function guessLevel(de) {
+  const t = String(de).replace(/\(.*?\)/g, '').replace(/^(der|die|das) /, '').trim();
+  let score = 0;
+  if (t.length > 9) score += 2; else if (t.length > 6) score += 1;
+  if (/ß/.test(t)) score += 2;
+  if (/[äöü]/i.test(t)) score += 1;
+  if (/sch|tsch|chs|tz|pf|ie|ei|eu|äu|v|z/i.test(t)) score += 1;
+  if (/\s/.test(t)) score += 1;
+  return score >= 3 ? 'hard' : score >= 1 ? 'medium' : 'easy';
+}
+
 function levelOf(w) {
-  const st = state.stats[keyOf(w)];
-  if (st && st.w > 0 && st.w >= st.r) return 'hard';
-  return isMastered(w) ? 'easy' : 'medium';
+  return LEVEL_OF_KEY[keyOf(w)] || guessLevel(w.de);
 }
 
 const LEVELS = [['easy', '😊', 'Łatwe'], ['medium', '🙂', 'Średnie'], ['hard', '😕', 'Trudne']];
